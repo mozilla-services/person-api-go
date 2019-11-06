@@ -1,4 +1,4 @@
-package persons_api
+package person_api
 
 import (
 	"bytes"

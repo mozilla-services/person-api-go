@@ -78,6 +78,66 @@ func (c *Client) GetAccessToken(authUrl string) (string, error) {
 	return authResp.AccessToken, nil
 }
 
+type usersResp struct {
+	Items    []*Person `json:"Items"`
+	NextPage string    `json:"nextPage"`
+}
+
+func (c *Client) GetAllUsers() ([]*Person, error) {
+	var (
+		allUsers []*Person
+		nextPage string
+		req      *http.Request
+		err      error
+	)
+
+	c.rwLock.RLock()
+	defer c.rwLock.RUnlock()
+	for {
+		if nextPage == "" {
+			req, err = http.NewRequest("GET", c.baseUrl+"/v2/users", nil)
+		} else {
+			req, err = http.NewRequest("GET", fmt.Sprintf("%s/v2/users?nextPage={\"id\":\"%s\"}", c.baseUrl, nextPage), nil)
+		}
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Add("Authorization", "Bearer "+c.accessToken)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("Persons API responded with status code %d", resp.StatusCode)
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		var uResp usersResp
+		err = json.Unmarshal(body, &uResp)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, i := range uResp.Items {
+			allUsers = append(allUsers, i)
+		}
+
+		if uResp.NextPage == "None" {
+			break
+		}
+		nextPage = uResp.NextPage
+	}
+
+	return allUsers, nil
+}
+
 func (c *Client) GetPersonByEmail(primaryEmail string) (*Person, error) {
 	c.rwLock.RLock()
 	defer c.rwLock.RUnlock()

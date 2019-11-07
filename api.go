@@ -37,6 +37,15 @@ func NewClient(id, secret, baseUrl, authUrl string) (*Client, error) {
 	return c, nil
 }
 
+type getMethod int
+
+const (
+	USERID           getMethod = 0
+	UUID             getMethod = 1
+	PRIMARY_EMAIL    getMethod = 2
+	PRIMARY_USERNAME getMethod = 3
+)
+
 func (c *Client) RefreshAccessToken() error {
 	c.rwLock.Lock()
 	defer c.rwLock.Unlock()
@@ -63,6 +72,11 @@ func (c *Client) GetAccessToken(authUrl string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("Persons API responded with status code %d", resp.StatusCode)
+	}
+
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -138,10 +152,24 @@ func (c *Client) GetAllUsers() ([]*Person, error) {
 	return allUsers, nil
 }
 
-func (c *Client) GetPersonByEmail(primaryEmail string) (*Person, error) {
+func (c *Client) getPerson(method getMethod, id string) (*Person, error) {
+	url := c.baseUrl + "/v2/user"
+
+	if method == USERID {
+		url = url + "/user_id/" + id
+	} else if method == UUID {
+		url = url + "/uuid/" + id
+	} else if method == PRIMARY_EMAIL {
+		url = url + "/primary_email/" + id
+	} else if method == PRIMARY_USERNAME {
+		url = url + "/primary_username/" + id
+	} else {
+		return nil, fmt.Errorf("Unknown method type")
+	}
+
 	c.rwLock.RLock()
 	defer c.rwLock.RUnlock()
-	req, err := http.NewRequest("GET", c.baseUrl+"/v2/user/primary_email/"+primaryEmail, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +196,48 @@ func (c *Client) GetPersonByEmail(primaryEmail string) (*Person, error) {
 	}
 
 	return &p, nil
+}
+
+func (c *Client) GetPersonByUserId(userid string) (*Person, error) {
+	return c.getPerson(USERID, userid)
+}
+func (c *Client) GetPersonByUUID(uuid string) (*Person, error) {
+	return c.getPerson(UUID, uuid)
+}
+func (c *Client) GetPersonByEmail(primaryEmail string) (*Person, error) {
+	return c.getPerson(PRIMARY_EMAIL, primaryEmail)
+}
+
+func (c *Client) GetPersonByUsername(primaryUsername string) (*Person, error) {
+	return c.getPerson(PRIMARY_USERNAME, primaryUsername)
+}
+
+func (c *Client) GetPersonsInGroups(groups []string) ([]*Person, error) {
+	collectedPersons := []*Person{}
+	persons, err := c.GetAllUsers()
+	if err != nil {
+		return collectedPersons, err
+	}
+	for _, person := range persons {
+		done := false
+		for group := range person.AccessInformation.LDAP.Values {
+			for _, specifiedGroup := range groups {
+				if group == specifiedGroup {
+					collectedPersons = append(collectedPersons, person)
+					done = true
+				}
+
+				if done {
+					break
+				}
+			}
+
+			if done {
+				break
+			}
+		}
+	}
+	return collectedPersons, nil
 }
 
 type AuthReq struct {

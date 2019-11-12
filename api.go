@@ -58,6 +58,7 @@ func (c *Client) RefreshAccessToken() error {
 }
 
 func (c *Client) GetAccessToken(authUrl string) (string, error) {
+	// TODO: Support passing in audience, scope, etc.
 	authReqBody, err := json.Marshal(AuthReq{
 		Audience:     "api.sso.mozilla.com",
 		Scope:        "classification:public display:public",

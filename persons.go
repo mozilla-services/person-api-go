@@ -1,6 +1,9 @@
 package person_api
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 func UnmarshalPerson(data []byte) (Person, error) {
 	var r Person
@@ -41,6 +44,28 @@ type Person struct {
 	UserID            StandardAttributeString         `json:"user_id"`
 	Usernames         StandardAttributeValues         `json:"usernames"`
 	UUID              StandardAttributeString         `json:"uuid"`
+}
+
+func (p *Person) GetLDAPUsername() string {
+	// UserID: "ad|Mozilla-LDAP|example"
+	userIdSplit := strings.Split(p.UserID.Value, "|")
+	return userIdSplit[2]
+}
+
+func (p *Person) GetSSHPublicKeys() []string {
+	var keys []string
+	for _, v := range p.SSHPublicKeys.Values.(map[string]interface{}) {
+		keys = append(keys, v.(string))
+	}
+	return keys
+}
+
+func (p *Person) GetPGPPublicKeys() []string {
+	var keys []string
+	for _, v := range p.PGPPublicKeys.Values.(map[string]interface{}) {
+		keys = append(keys, v.(string))
+	}
+	return keys
 }
 
 type AccessInformationValuesArray struct {

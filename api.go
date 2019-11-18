@@ -95,13 +95,17 @@ func (c *Client) GetAccessToken(authUrl string) (string, error) {
 
 type usersResp struct {
 	Items    []*Person `json:"Items"`
-	NextPage string    `json:"nextPage"`
+	NextPage *nextPage `json:"nextPage"`
+}
+
+type nextPage struct {
+	Id string `json:"id"`
 }
 
 func (c *Client) GetAllUsers() ([]*Person, error) {
 	var (
 		allUsers []*Person
-		nextPage string
+		next     *nextPage
 		req      *http.Request
 		err      error
 	)
@@ -109,10 +113,10 @@ func (c *Client) GetAllUsers() ([]*Person, error) {
 	c.rwLock.RLock()
 	defer c.rwLock.RUnlock()
 	for {
-		if nextPage == "" {
+		if next == nil || next.Id == "" {
 			req, err = http.NewRequest("GET", c.baseUrl+"/v2/users", nil)
 		} else {
-			req, err = http.NewRequest("GET", fmt.Sprintf("%s/v2/users?nextPage={\"id\":\"%s\"}", c.baseUrl, nextPage), nil)
+			req, err = http.NewRequest("GET", fmt.Sprintf("%s/v2/users?nextPage={\"id\":\"%s\"}", c.baseUrl, next.Id), nil)
 		}
 		if err != nil {
 			return nil, err
@@ -144,10 +148,10 @@ func (c *Client) GetAllUsers() ([]*Person, error) {
 			allUsers = append(allUsers, i)
 		}
 
-		if uResp.NextPage == "None" {
+		if uResp.NextPage == nil {
 			break
 		}
-		nextPage = uResp.NextPage
+		next = uResp.NextPage
 	}
 
 	return allUsers, nil

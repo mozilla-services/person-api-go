@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"sync"
 )
 
@@ -44,6 +45,13 @@ const (
 	UUID             getMethod = 1
 	PRIMARY_EMAIL    getMethod = 2
 	PRIMARY_USERNAME getMethod = 3
+)
+
+type listMethod int
+
+const (
+	GET_ALL              listMethod = 0
+	GET_ALL_ACTIVE_STAFF listMethod = 1
 )
 
 func (c *Client) RefreshAccessToken() error {
@@ -102,22 +110,52 @@ type nextPage struct {
 	Id string `json:"id"`
 }
 
+func (c *Client) GetAllActiveStaff() ([]*Person, error) {
+	return c.getUsers(GET_ALL_ACTIVE_STAFF)
+}
+
 func (c *Client) GetAllUsers() ([]*Person, error) {
+	return c.getUsers(GET_ALL)
+}
+
+func (c *Client) getUsers(method listMethod) ([]*Person, error) {
 	var (
-		allUsers []*Person
-		next     *nextPage
-		req      *http.Request
-		err      error
+		allUsers  []*Person
+		next      *nextPage
+		req       *http.Request
+		getAllUrl *url.URL
+		err       error
 	)
 
 	c.rwLock.RLock()
 	defer c.rwLock.RUnlock()
+
+	if method == GET_ALL {
+		getAllUrl, err = url.Parse(c.baseUrl + "/v2/users")
+	} else if method == GET_ALL_ACTIVE_STAFF {
+		getAllUrl, err = url.Parse(c.baseUrl + "/v2/users/id/all/by_attribute_contains")
+		q := getAllUrl.Query()
+		q.Set("active", "True")
+		q.Set("fullProfiles", "True")
+		q.Set("staff_information.staff", "True")
+		getAllUrl.RawQuery = q.Encode()
+	} else {
+		return nil, fmt.Errorf("Unknown method type")
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	for {
-		if next == nil || next.Id == "" {
-			req, err = http.NewRequest("GET", c.baseUrl+"/v2/users", nil)
-		} else {
-			req, err = http.NewRequest("GET", fmt.Sprintf("%s/v2/users?nextPage={\"id\":\"%s\"}", c.baseUrl, next.Id), nil)
+		if next != nil && next.Id != "" {
+			q := getAllUrl.Query()
+			q.Set("nextPage", fmt.Sprintf("{\"id\":\"%s\"}", next.Id))
+			getAllUrl.RawQuery = q.Encode()
 		}
+
+		fmt.Println(getAllUrl.String())
+
+		req, err = http.NewRequest("GET", getAllUrl.String(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +257,7 @@ func (c *Client) GetPersonByUsername(primaryUsername string) (*Person, error) {
 
 func (c *Client) GetPersonsInGroups(groups []string) ([]*Person, error) {
 	collectedPersons := []*Person{}
-	persons, err := c.GetAllUsers()
+	persons, err := c.GetAllActiveStaff()
 	if err != nil {
 		return collectedPersons, err
 	}

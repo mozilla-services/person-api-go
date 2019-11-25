@@ -69,7 +69,7 @@ func (c *Client) GetAccessToken(authUrl string) (string, error) {
 	// TODO: Support passing in audience, scope, etc.
 	authReqBody, err := json.Marshal(AuthReq{
 		Audience:     "api.sso.mozilla.com",
-		Scope:        "classification:public display:public",
+		Scope:        "classification:public display:public search:all",
 		GrantType:    "client_credentials",
 		ClientId:     c.clientId,
 		ClientSecret: c.clientSecret})
@@ -101,7 +101,7 @@ func (c *Client) GetAccessToken(authUrl string) (string, error) {
 	return authResp.AccessToken, nil
 }
 
-type usersResp struct {
+type getAllUsersResp struct {
 	Items    []*Person `json:"Items"`
 	NextPage *nextPage `json:"nextPage"`
 }
@@ -110,50 +110,42 @@ type nextPage struct {
 	Id string `json:"id"`
 }
 
+type getAllActiveStaffResp struct {
+	Users    []byAttrUserResp `json:"users"`
+	NextPage string           `json:"nextPage"`
+}
+
+type byAttrUserResp struct {
+	Id      StandardAttributeString `json:"id"`
+	Profile *Person                 `json:"profile"`
+}
+
 func (c *Client) GetAllActiveStaff() ([]*Person, error) {
-	return c.getUsers(GET_ALL_ACTIVE_STAFF)
-}
-
-func (c *Client) GetAllUsers() ([]*Person, error) {
-	return c.getUsers(GET_ALL)
-}
-
-func (c *Client) getUsers(method listMethod) ([]*Person, error) {
 	var (
-		allUsers  []*Person
-		next      *nextPage
-		req       *http.Request
-		getAllUrl *url.URL
-		err       error
+		allUsers []*Person
+		nextPage string
+		req      *http.Request
 	)
 
 	c.rwLock.RLock()
 	defer c.rwLock.RUnlock()
 
-	if method == GET_ALL {
-		getAllUrl, err = url.Parse(c.baseUrl + "/v2/users")
-	} else if method == GET_ALL_ACTIVE_STAFF {
-		getAllUrl, err = url.Parse(c.baseUrl + "/v2/users/id/all/by_attribute_contains")
-		q := getAllUrl.Query()
-		q.Set("active", "True")
-		q.Set("fullProfiles", "True")
-		q.Set("staff_information.staff", "True")
-		getAllUrl.RawQuery = q.Encode()
-	} else {
-		return nil, fmt.Errorf("Unknown method type")
-	}
+	getAllUrl, err := url.Parse(c.baseUrl + "/v2/users/id/all/by_attribute_contains")
 	if err != nil {
 		return nil, err
 	}
+	q := getAllUrl.Query()
+	q.Set("active", "True")
+	q.Set("fullProfiles", "True")
+	q.Set("staff_information.staff", "True")
+	getAllUrl.RawQuery = q.Encode()
 
 	for {
-		if next != nil && next.Id != "" {
+		if nextPage != "" {
 			q := getAllUrl.Query()
-			q.Set("nextPage", fmt.Sprintf("{\"id\":\"%s\"}", next.Id))
+			q.Set("nextPage", nextPage)
 			getAllUrl.RawQuery = q.Encode()
 		}
-
-		fmt.Println(getAllUrl.String())
 
 		req, err = http.NewRequest("GET", getAllUrl.String(), nil)
 		if err != nil {
@@ -176,7 +168,69 @@ func (c *Client) getUsers(method listMethod) ([]*Person, error) {
 			return nil, err
 		}
 
-		var uResp usersResp
+		var uResp getAllActiveStaffResp
+		err = json.Unmarshal(body, &uResp)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, i := range uResp.Users {
+			allUsers = append(allUsers, i.Profile)
+		}
+
+		if uResp.NextPage == "" {
+			break
+		}
+		nextPage = uResp.NextPage
+	}
+
+	return allUsers, nil
+}
+
+func (c *Client) GetAllUsers() ([]*Person, error) {
+	var (
+		allUsers []*Person
+		next     *nextPage
+		req      *http.Request
+	)
+
+	c.rwLock.RLock()
+	defer c.rwLock.RUnlock()
+
+	getAllUrl, err := url.Parse(c.baseUrl + "/v2/users")
+	if err != nil {
+		return nil, err
+	}
+
+	for {
+		if next != nil && next.Id != "" {
+			q := getAllUrl.Query()
+			q.Set("nextPage", fmt.Sprintf("{\"id\":\"%s\"}", next.Id))
+			getAllUrl.RawQuery = q.Encode()
+		}
+
+		req, err = http.NewRequest("GET", getAllUrl.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Add("Authorization", "Bearer "+c.accessToken)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("Persons API responded with status code %d", resp.StatusCode)
+		}
+
+		defer resp.Body.Close()
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		var uResp getAllUsersResp
 		err = json.Unmarshal(body, &uResp)
 		if err != nil {
 			return nil, err
